@@ -2,18 +2,22 @@
 import time
 import RPi.GPIO as GPIO
 
+# LED pin
+LED = 16
+
 # Use BCM GPIO references
 # instead of physical pin numbers
 GPIO.setmode(GPIO.BCM)
 
+# Sets up LED pin
+GPIO.setup(LED,GPIO.OUT)
+GPIO.setwarnings(False)
+
 # Define GPIO to use on Pi
 GPIO_TRIGECHO = 15
 
-print("Ultrasonic Measurement")
-
 # Set pins as output and input
 GPIO.setup(GPIO_TRIGECHO,GPIO.OUT)  # Initial state as output
-
 
 # Set trigger to False (Low)
 GPIO.output(GPIO_TRIGECHO, False)
@@ -49,13 +53,26 @@ try:
     while True:
         distance = measure()
         print("Distance : %.1f cm" % distance)
-        time.sleep(1)
-        if distance < 15.0:
-            print("Go Backwards!")
+        
+        if distance < 18.0:
+            GPIO.output(LED, GPIO.HIGH)
+            time.sleep(1)
+            
+        elif distance < 25.0:
+            GPIO.output(LED, GPIO.HIGH)
+            time.sleep(0.5)
+            GPIO.output(LED, GPIO.LOW)
+            time.sleep(0.5)
+
         elif distance < 30.0:
-            print("Turn Right.")
+            GPIO.output(LED, GPIO.HIGH)
+            time.sleep(1)
+            GPIO.output(LED, GPIO.LOW)
+            time.sleep(1)
+
         else:
-            print("CHARGE!")
+            GPIO.output(LED, GPIO.LOW)
+            time.sleep(1)
 
 except KeyboardInterrupt:
     print("Stop")
