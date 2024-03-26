@@ -39,7 +39,8 @@ Then in rviz, press "add", pick map, then set topic as "/global_costmap/costmap"
 https://github.com/Khanrik/CE-Lab24-Gr1
 
 ### Cartographer
-Cartographer er bare dårligere
+Cartographer er bare dårligere men her er et link:
+https://github.com/DaniGarciaLopez/ros2_explorer
 
 #### Robotis/Turtlebot3 documentation
 https://emanual.robotis.com/docs/en/platform/turtlebot3/slam/#run-teleoperation-node
