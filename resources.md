@@ -1,4 +1,9 @@
 # Resources
+## Physical Ressource
+We have turtlebot 3 on a Raspberry PI 4 with number 1.
+
+We have SD-card 22 and 1.
+
 ## Commands
 ### Running Cartographer
 Always Run this on PI first:
