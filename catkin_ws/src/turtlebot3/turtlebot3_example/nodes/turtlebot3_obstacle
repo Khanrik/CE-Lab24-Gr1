@@ -19,8 +19,10 @@
 
 import rospy
 import math
+import statistics
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
+import readFromRGB
 
 LINEAR_VEL = 0.21 #MAX = 0.21, MAX ANG.Z=2.6
 LINEAR_PERCENT = LINEAR_VEL/100
@@ -29,24 +31,25 @@ ANGULAR_PERCENT = ANGULAR_VEL/100
 STOP_DISTANCE = 0.10
 LIDAR_ERROR = 0.05
 SAFE_STOP_DISTANCE = STOP_DISTANCE + LIDAR_ERROR
-FULL_SEND_DISTANCE = SAFE_STOP_DISTANCE * 5
+FULL_SEND_DISTANCE = SAFE_STOP_DISTANCE * 3
 
-LEFT = 0
-RIGHT = 1
+LEFT = 1
+RIGHT = -1
 
 class Obstacle():
     def __init__(self):
         self._cmd_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
         self.obstacle()
 
-    def turn(self, direction, distance):
+    def turn(self, direction, distance, back_up = False):
         linear_skew = abs((distance - FULL_SEND_DISTANCE) / (FULL_SEND_DISTANCE))
         angular_skew = 100 - linear_skew
-
-        if direction == LEFT:
-            return linear_skew * LINEAR_PERCENT, angular_skew * ANGULAR_PERCENT
-        elif direction == RIGHT:
-            return linear_skew * LINEAR_PERCENT, -angular_skew * ANGULAR_PERCENT
+        
+        # Direction changes parity of angular vel to turn left or right
+        if not back_up:
+            return linear_skew * LINEAR_PERCENT, direction * angular_skew * ANGULAR_PERCENT
+        else:
+            return -linear_skew * LINEAR_PERCENT, -direction * angular_skew * ANGULAR_PERCENT
         
     def get_scan(self):
         scan = rospy.wait_for_message('scan', LaserScan)
@@ -81,37 +84,52 @@ class Obstacle():
 
     def obstacle(self):
         twist = Twist()
-        turtlebot_moving = True
 
         while not rospy.is_shutdown():
             lidar_distances = self.get_scan()
-            min_left = min(lidar_distances[:45])
-            min_right = min(lidar_distances[45:])
-            min_distance = min(lidar_distances)
-            print(len(lidar_distances))
-            print(lidar_distances)
+            statistics.mean(lidar_distances)
+            angles = []
+            distances = []
+            for i in range(6):
+                theta = i * 30
+                angles = angles.append(theta)
+                distances.append(statistics.mean(lidar_distances[theta:theta+30]))
 
-            if min_distance < SAFE_STOP_DISTANCE:
-                twist.linear.x = 0.0
-                twist.angular.z = 0.0 #ANGULAR_VEL
+            if distances[2] < SAFE_STOP_DISTANCE: # 60°-90°
+                twist.linear.x, twist.angular.z = self.turn(LEFT, distances[2], back_up = True)
                 self._cmd_pub.publish(twist)
-                rospy.loginfo('Too close! %f', min_distance)
-            elif min_distance > FULL_SEND_DISTANCE:
-                twist.linear.x = LINEAR_VEL
-                twist.angular.z = 0.0
+                rospy.loginfo(f'Too close at {angles[2]}°! (distance = {distances[2]})')
+            
+            elif distances[3] < SAFE_STOP_DISTANCE: # 90°-120°
+                twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[3], back_up = True)
                 self._cmd_pub.publish(twist)
-                turtlebot_moving = True
-                rospy.loginfo('Distance of the obstacle : %f', min_distance)
-            elif min_left <= min_right:
-                twist.linear.x, twist.angular.z = self.turn(LEFT, min_left)
+                rospy.loginfo(f'Too close at {angles[3]}°! (distance = {distances[3]})')
+            
+            elif distances[1] < SAFE_STOP_DISTANCE * 2: # 30°-60°
+                twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[1])
                 self._cmd_pub.publish(twist)
-                turtlebot_moving = True
-                rospy.loginfo('Turn left!')
-            elif min_right <= min_left:
-                twist.linear.x, twist.angular.z = self.turn(RIGHT, min_right)
+                rospy.loginfo(f'Turn right, away from {angles[1]}°! (distance = {distances[1]})')
+            
+            elif distances[4] < SAFE_STOP_DISTANCE * 2: # 120°-150°
+                twist.linear.x, twist.angular.z = self.turn(LEFT, distances[4])
                 self._cmd_pub.publish(twist)
-                turtlebot_moving = True
-                rospy.loginfo('Turn right!')
+                rospy.loginfo(f'Turn left, away from {angles[4]}°! (distance = {distances[4]})')
+            
+            elif distances[0] < SAFE_STOP_DISTANCE: # 0°-30°
+                twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[0])
+                self._cmd_pub.publish(twist)
+                rospy.loginfo(f'Too close at {angles[0]}°! (distance = {distances[0]})')
+            
+            elif distances[5] < SAFE_STOP_DISTANCE: # 150°-180°
+                twist.linear.x, twist.angular.z = self.turn(LEFT, distances[5])
+                self._cmd_pub.publish(twist)
+                rospy.loginfo(f'Too close at {angles[5]}°! (distance = {distances[5]})')
+
+            else:
+                twist.linear.x, twist.angular.z = LINEAR_VEL, 0
+                self._cmd_pub.publish(twist)
+
+            rospy.sleep(0.1)
 
 
 def main():
