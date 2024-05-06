@@ -38,5 +38,6 @@ def blinkLED():
         time.sleep(1)
         GPIO.output(led,GPIO.LOW)
 
-if detectVictim():
-        print("Victim detected")
+if __name__ == "__main__":
+        if detectVictim():
+                print("Victim detected")
