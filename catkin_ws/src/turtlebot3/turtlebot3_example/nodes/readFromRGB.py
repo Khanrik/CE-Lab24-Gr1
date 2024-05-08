@@ -10,6 +10,9 @@ GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 GPIO.setup(led,GPIO.OUT)
 
+def mean_list(a):
+        return sum(a) / len(a)
+
 def mean_lists(a, b, c):
         liste = []
         for i in range(len(a)):
@@ -29,15 +32,19 @@ def detectVictim():
                 reds.append(red)
                 blues.append(blue)
 
-        if mean_lists(reds, greens, blues) < 3:
+        if mean_list(reds) > mean_list(greens) + 1.5 and mean_list(reds) > mean_list(blues) + 1.5:
                 return True
+
         return False
 
-def blinkLED():
-        GPIO.output(led,GPIO.HIGH)
-        time.sleep(1)
+def LEDon():
         GPIO.output(led,GPIO.LOW)
 
+def LEDoff():
+        GPIO.output(led,GPIO.HIGH)
+
 if __name__ == "__main__":
-        if detectVictim():
-                print("Victim detected")
+        while True:
+                if detectVictim():
+                        print("Victim detected")
+                        #blinkLED()

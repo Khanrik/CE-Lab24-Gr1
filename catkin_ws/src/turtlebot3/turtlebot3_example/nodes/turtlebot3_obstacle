@@ -33,6 +33,7 @@ STOP_DISTANCE = 0.10
 LIDAR_ERROR = 0.05
 SAFE_STOP_DISTANCE = STOP_DISTANCE + LIDAR_ERROR
 FULL_SEND_DISTANCE = SAFE_STOP_DISTANCE * 4
+RUNTIME = 60
 
 LEFT = 1
 RIGHT = -1
@@ -42,7 +43,7 @@ class Obstacle():
         self.speed_updates = 0
         self.speed_accumulation = 0
         self.collision_counter = 0
-        self.vicim_counter = 0
+        self.victim_counter = 0
         self._cmd_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
         self.obstacle()
 
@@ -92,8 +93,9 @@ class Obstacle():
     def obstacle(self):
         twist = Twist()
         start = time.time()
-        limit = 120
-        end = start + limit
+        end = start + RUNTIME
+	offtime = 0
+	count_victim = False
 
         while not rospy.is_shutdown() and time.time() < end:
             lidar_distances = self.get_scan()
@@ -187,21 +189,27 @@ class Obstacle():
                 rospy.loginfo('GO!')
             
             if detectVictim():
-                blinkLED()
-                twist.linear.x, twist.angular.z = 0.0, 0.0
-                self._cmd_pub.publish(twist)
-                self.vicim_counter += 1
-                rospy.loginfo('Victim detected!')
-            
+                LEDon()
+		offtime = time.time() + 1
+		count_victim = True
+
+            if time.time() > offtime:
+		if count_victim:
+			self.victim_counter += 1
+			rospy.loginfo('Victim detected!')
+			count_victim = False
+		LEDoff()
+
             self.speed_accumulation += twist.linear.x
             self.speed_updates += 1
             rospy.sleep(0.1)
         
+	LEDoff()
         twist.linear.x, twist.angular.z = 0, 0
         self._cmd_pub.publish(twist)
         avg_speed = self.speed_accumulation / self.speed_updates
-        rospy.loginfo('Average speed = %f, collision counter = %d', avg_speed, self.collision_counter)
-        rospy.loginfo('%f minutes have passed. Shutting down...', limit/60)
+        rospy.loginfo('Average speed = %f, collision counter = %d, victim counter = %d', avg_speed, self.collision_counter, self.victim_counter)
+        rospy.loginfo('%f minutes have passed. Shutting down...', RUNTIME/60.0)
 
 
 def main():
