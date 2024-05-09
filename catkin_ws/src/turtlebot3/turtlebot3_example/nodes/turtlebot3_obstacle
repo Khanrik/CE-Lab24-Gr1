@@ -25,39 +25,25 @@ from geometry_msgs.msg import Twist
 import time
 from readFromRGB import *
 
-LINEAR_VEL = 0.21 #MAX = 0.21, MAX ANG.Z=2.6
+LINEAR_VEL = -0.15 #MAX = 0.21, MAX ANG.Z=2.6
 LINEAR_PERCENT = LINEAR_VEL/100
 ANGULAR_VEL = 2.6
 ANGULAR_PERCENT = ANGULAR_VEL/100
 STOP_DISTANCE = 0.10
 LIDAR_ERROR = 0.05
-SAFE_STOP_DISTANCE = STOP_DISTANCE + LIDAR_ERROR
-FULL_SEND_DISTANCE = SAFE_STOP_DISTANCE * 4
-RUNTIME = 60
+SAFE_STOP_DISTANCE = STOP_DISTANCE + LIDAR_ERROR    # 15 cm
+FULL_SEND_DISTANCE = SAFE_STOP_DISTANCE * 4         # 60 cm
+VISION = 360 # vision in degrees
+RUNTIME = 60 # runtime in seconds
 
 LEFT = 1
 RIGHT = -1
 
 class Obstacle():
     def __init__(self):
-        self.speed_updates = 0
-        self.speed_accumulation = 0
-        self.collision_counter = 0
-        self.victim_counter = 0
+        self.samples_view = 0
         self._cmd_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
         self.obstacle()
-
-    def turn(self, direction, distance, weight, back_up = False):
-        angular_skew = (abs(distance * (1 - weight) - FULL_SEND_DISTANCE) / FULL_SEND_DISTANCE) * 100
-        linear_skew = 100 - angular_skew
-
-        rospy.loginfo('Distribution is angular = %f, linaer = %f', angular_skew, linear_skew)
-        
-        # Direction changes parity of angular vel to turn left or right
-        if not back_up:
-            return linear_skew * LINEAR_PERCENT, direction * angular_skew * ANGULAR_PERCENT
-        else:
-            return -linear_skew * LINEAR_PERCENT, direction * angular_skew * ANGULAR_PERCENT
         
     def get_scan(self):
         scan = rospy.wait_for_message('scan', LaserScan)
@@ -66,151 +52,142 @@ class Obstacle():
         samples = len(scan.ranges)  # The number of samples is defined in 
                                     # turtlebot3_<model>.gazebo.xacro file,
                                     # the default is 360.
-        samples_view = 180          # 1 <= samples_view <= samples
-        
-        if samples_view > samples:
-            samples_view = samples
+        self.samples_view = VISION  # 1 <= samples_view <= samples
+        if self.samples_view > samples:
+            self.samples_view = samples
 
-        if samples_view is 1:
+        if self.samples_view is 1:
             scan_filter.append(scan.ranges[0])
 
         else:
-            left_lidar_samples_ranges = -(samples_view//2 + samples_view % 2)
-            right_lidar_samples_ranges = samples_view//2
+            left_lidar_samples_ranges = -(self.samples_view//2 + self.samples_view % 2)
+            right_lidar_samples_ranges = self.samples_view//2
             
             left_lidar_samples = scan.ranges[left_lidar_samples_ranges:]
             right_lidar_samples = scan.ranges[:right_lidar_samples_ranges]
             scan_filter.extend(left_lidar_samples + right_lidar_samples)
 
-        for i in range(samples_view):
+        for i in range(self.samples_view):
             if scan_filter[i] == float('Inf'):
                 scan_filter[i] = 3.5
             elif math.isnan(scan_filter[i]):
                 scan_filter[i] = 0
         
         return scan_filter
+    
+    def deg(self, deg):
+        return np.round(deg * (float(self.samples_view) / float(VISION)), 0).astype(int)
 
     def obstacle(self):
         twist = Twist()
         start = time.time()
         end = start + RUNTIME
-	offtime = 0
-	count_victim = False
+        victim_offtime = 0
+        collision_offtime = 0
+        speed_updates = 0
+        speed_accumulation = 0
+        collision_counter = 0
+        victim_counter = 0
 
         while not rospy.is_shutdown() and time.time() < end:
-            lidar_distances = self.get_scan()
-            np.mean(lidar_distances)
-            angles = []
-            distances = []
-            for i in range(6):
-                theta = i * 30
-                angles.append(theta)
-                theta = 180 - theta
-                distances.append(np.mean(lidar_distances[theta-30:theta]))
-            
-            big_turn = 0.0
-            norm_turn = -0.1
-            smol_turn = -0.2
+            distances = self.get_scan()
+            front = np.mean(distances[self.deg(340):] + distances[:self.deg(20)])
+            left_front = np.mean(distances[:self.deg(20)])
+            right_front = np.mean(distances[self.deg(340):])
 
-            if min(distances) <= STOP_DISTANCE:
-                twist.linear.x = -LINEAR_VEL
+            # print("front mean: ", front)
+            # print("back mean: ", np.mean(distances[self.deg(160):self.deg(200)]))
+            # print("left mean: ", np.mean(distances[self.deg(250):self.deg(290)]))
+            # print("right mean: ", np.mean(distances[self.deg(70):self.deg(110)]))
+
+            for tal in range(0,350,10):
+                if np.mean(distances[tal : tal + 20]) < STOP_DISTANCE and collision_offtime <= time.time():
+                    collision_offtime = time.time() + 5
+                    collision_counter += 1
+                    rospy.loginfo('Collision detected')
+                
+            if front < SAFE_STOP_DISTANCE:
+                twist.linear.x = -LINEAR_VEL / 4
                 twist.angular.z = 0.0
-                self.collision_counter += 1
-                rospy.loginfo('Collision detected')
-
-            elif min(distances[2:4]) < FULL_SEND_DISTANCE or min(distances[1], distances[4]) < SAFE_STOP_DISTANCE:
-                if sum(distances) <= 6 * SAFE_STOP_DISTANCE: # Uturn if it is surrounded
-                    twist.linear.x, twist.angular.z = 0.0, ANGULAR_VEL
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Uturning!')
-
-                elif distances[2] < SAFE_STOP_DISTANCE: # 60 deg-90 deg
-                    twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[2], big_turn, back_up = True)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Backup left! (ang = %f, distance = %f)', angles[2], distances[2])
+                self._cmd_pub.publish(twist)
+                rospy.loginfo('very close')
+            elif np.mean(distances[self.deg(160):self.deg(200)]) < SAFE_STOP_DISTANCE:
+                twist.linear.x = LINEAR_VEL / 4
+                twist.angular.z = 0.0
+                self._cmd_pub.publish(twist)
+                rospy.loginfo('very close')
+            elif np.mean(distances[self.deg(70):self.deg(110)]) < SAFE_STOP_DISTANCE:
+                twist.linear.x = 0.0
+                twist.angular.z = RIGHT * ANGULAR_VEL / 4
+                self._cmd_pub.publish(twist)
+                rospy.loginfo('very close')
+            elif np.mean(distances[self.deg(250):self.deg(290)]) < SAFE_STOP_DISTANCE:
+                twist.linear.x = 0.0
+                twist.angular.z = LEFT * ANGULAR_VEL / 4
+                self._cmd_pub.publish(twist)
+                rospy.loginfo('very close')
+            
+            # FRONT CLOSE AHEAD
+            elif np.mean(distances[self.deg(330):] + distances[:self.deg(30)]) < FULL_SEND_DISTANCE * 0.6:
+                if np.mean(distances[:self.deg(30)]) < np.mean(distances[self.deg(330):]):
+                    twist.linear.x = 70 * LINEAR_PERCENT
+                    twist.angular.z = RIGHT * 30 * ANGULAR_PERCENT
+                else:
+                    twist.linear.x = 70 * LINEAR_PERCENT
+                    twist.angular.z = LEFT * 30 * ANGULAR_PERCENT
+                self._cmd_pub.publish(twist)
+                rospy.loginfo('Object close ahead, turning')
                 
-                elif distances[3] < SAFE_STOP_DISTANCE: # 90 deg-120 deg
-                    twist.linear.x, twist.angular.z = self.turn(LEFT, distances[3], big_turn, back_up = True)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Backup right! (ang = %f, distance = %f)', angles[3], distances[3])
+            # FRONT BLOCKED MEDIUM AHEAD
+            elif front < FULL_SEND_DISTANCE * 0.8:
+                if left_front < right_front:
+                    twist.linear.x = 80 * LINEAR_PERCENT
+                    twist.angular.z = RIGHT * 20 * ANGULAR_PERCENT
+                else:
+                    twist.linear.x = 80 * LINEAR_PERCENT
+                    twist.angular.z = LEFT * 20 * ANGULAR_PERCENT
+                self._cmd_pub.publish(twist)
+                rospy.loginfo('Object medium ahead, turning')
+            
+            # FRONT BLOCKED FAR AHEAD
+            elif front < FULL_SEND_DISTANCE:
+                if left_front < np.mean(distances[self.deg(180):self.deg(200)]):
+                    twist.linear.x = 90 * LINEAR_PERCENT
+                    twist.angular.z = RIGHT * 10 * ANGULAR_PERCENT
+                else:
+                    twist.linear.x = 90 * LINEAR_PERCENT
+                    twist.angular.z = LEFT * 10 * ANGULAR_PERCENT
+                self._cmd_pub.publish(twist)
+                rospy.loginfo('Object far ahead, turning')
                 
-                elif distances[2] < FULL_SEND_DISTANCE / 3: # 60 deg-90 deg
-                    twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[2], big_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Big turn right! (ang = %f, distance = %f)', angles[2], distances[2])
-                
-                elif distances[3] < FULL_SEND_DISTANCE / 3: # 90 deg-120 deg
-                    twist.linear.x, twist.angular.z = self.turn(LEFT, distances[3], big_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Big turn left! (ang = %f, distance = %f)', angles[3], distances[3])
-
-                elif distances[2] < FULL_SEND_DISTANCE / 2: # 60 deg-90 deg
-                    twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[2], norm_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Turn right! (ang = %f, distance = %f)', angles[2], distances[2])
-                
-                elif distances[3] < FULL_SEND_DISTANCE / 2: # 120 deg-150 deg
-                    twist.linear.x, twist.angular.z = self.turn(LEFT, distances[3], norm_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Turn left! (ang = %f, distance = %f)', angles[3], distances[3])
-                
-                elif distances[2] < FULL_SEND_DISTANCE: # 60 deg-90 deg
-                    twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[2], smol_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Slight right! (ang = %f, distance = %f)', angles[2], distances[2])
-                
-                elif distances[3] < FULL_SEND_DISTANCE: # 150 deg-180 deg
-                    twist.linear.x, twist.angular.z = self.turn(LEFT, distances[3], smol_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Slight left! (ang = %f, distance = %f)', angles[3], distances[3])
-
-                elif distances[1] < FULL_SEND_DISTANCE / 2: # 30 deg-60 deg
-                    twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[1], norm_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Turn right! (ang = %f, distance = %f)', angles[1], distances[1])
-                
-                elif distances[4] < FULL_SEND_DISTANCE / 2: # 120 deg-150 deg
-                    twist.linear.x, twist.angular.z = self.turn(LEFT, distances[4], norm_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Turn left! (ang = %f, distance = %f)', angles[4], distances[4])
-                
-                elif distances[0] < FULL_SEND_DISTANCE: # 0 deg-30 deg
-                    twist.linear.x, twist.angular.z = self.turn(RIGHT, distances[0], smol_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Slight right! (ang = %f, distance = %f)', angles[0], distances[0])
-                
-                elif distances[5] < FULL_SEND_DISTANCE: # 150 deg-180 deg
-                    twist.linear.x, twist.angular.z = self.turn(LEFT, distances[5], smol_turn)
-                    self._cmd_pub.publish(twist)
-                    rospy.loginfo('Slight left! (ang = %f, distance = %f)', angles[5], distances[5])
             else:
+                # twist.linear.x = 0
+                # twist.angular.z = 0
+                # self._cmd_pub.publish(twist)
+                # rospy.loginfo('Nothing going on here mister')
                 twist.linear.x, twist.angular.z = LINEAR_VEL, 0.0
                 self._cmd_pub.publish(twist)
                 rospy.loginfo('GO!')
             
             if detectVictim():
                 LEDon()
-		offtime = time.time() + 1
-		count_victim = True
+                if victim_offtime <= time.time():
+                    victim_offtime = time.time() + 3
+                    victim_counter += 1
+                    rospy.loginfo('Victim detected!')
 
-            if time.time() > offtime:
-		if count_victim:
-			self.victim_counter += 1
-			rospy.loginfo('Victim detected!')
-			count_victim = False
-		LEDoff()
+            if time.time() > victim_offtime:
+                LEDoff()
 
-            self.speed_accumulation += twist.linear.x
-            self.speed_updates += 1
-            rospy.sleep(0.1)
+            speed_accumulation += twist.linear.x
+            speed_updates += 1
         
-	LEDoff()
+        LEDoff()
         twist.linear.x, twist.angular.z = 0, 0
         self._cmd_pub.publish(twist)
-        avg_speed = self.speed_accumulation / self.speed_updates
-        rospy.loginfo('Average speed = %f, collision counter = %d, victim counter = %d', avg_speed, self.collision_counter, self.victim_counter)
+        avg_speed = speed_accumulation / speed_updates
+        rospy.loginfo('Average speed = %f, collision counter = %d, victim counter = %d', avg_speed, collision_counter, victim_counter)
         rospy.loginfo('%f minutes have passed. Shutting down...', RUNTIME/60.0)
-
 
 def main():
     rospy.init_node('turtlebot3_obstacle')
