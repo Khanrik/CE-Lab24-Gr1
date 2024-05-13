@@ -37,7 +37,7 @@ def detectVictim():
 
     #print(f'Red: {red_mean}, Green: {green_mean}, Blue: {blue_mean}')
 
-    if red_mean > green_mean + blue_mean - ((red_mean + green_mean + blue_mean) / 4):
+    if red_mean > green_mean + blue_mean - ((red_mean + green_mean + blue_mean) / 6):
         return True
 
     return False
@@ -61,5 +61,5 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         pass
-        #print(f"Victims: {victims}")
+        print("Victims: ", victims)
             
